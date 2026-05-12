@@ -11,9 +11,9 @@ import {
 
 import "leaflet/dist/leaflet.css";
 
-const PURPLEAIR_API_KEY = "65DFFBAB-4B0D-11F1-B596-4201AC1DC123";
+const PURPLEAIR_API_KEY = "";
 
-const FIRMS_MAP_KEY = "e0b279fd958f3f71022f538f2f55bb00";
+const FIRMS_MAP_KEY = "";
 
 
 const communities = [
