@@ -6,13 +6,15 @@ import {
   CircleMarker,
   Popup,
   Circle,
-  useMap,
+  ImageOverlay,
 } from "react-leaflet";
 
 import "leaflet/dist/leaflet.css";
 
 const PURPLEAIR_API_KEY = "65DFFBAB-4B0D-11F1-B596-4201AC1DC123";
+
 const FIRMS_MAP_KEY = "e0b279fd958f3f71022f538f2f55bb00";
+
 
 const communities = [
   { name: "Brokenhead Ojibway Nation", position: [50.366194, -96.614033] },
@@ -25,30 +27,6 @@ const communities = [
   { name: "Little Grand Rapids First Nation", position: [52.016794, -95.456975] },
 ];
 
-const wildfires = [
-  {
-    fireNumber: "WE-023",
-    position: [52.85, -97.55],
-    status: "Out of Control",
-    size: "2,450 ha",
-    response: "Full Response",
-  },
-  {
-    fireNumber: "EA-014",
-    position: [52.2, -95.85],
-    status: "Being Held",
-    size: "860 ha",
-    response: "Modified Response",
-  },
-  {
-    fireNumber: "BR-008",
-    position: [51.85, -96.15],
-    status: "Monitored",
-    size: "175 ha",
-    response: "Monitor Only",
-  },
-];
-
 const brokenheadSensor = {
   id: 306468,
   communityName: "Brokenhead Ojibway Nation",
@@ -56,18 +34,13 @@ const brokenheadSensor = {
   position: [50.362938, -96.62372],
 };
 
-const fireViewColours = {
+const fireColours = {
   "Out of Control": "#dc2626",
   "Being Held": "#facc15",
   Monitored: "#9333ea",
   "Under Control": "#22c55e",
-};
-
-const statusRank = {
-  "Out of Control": 4,
-  "Being Held": 3,
-  Monitored: 2,
-  "Under Control": 1,
+  Prescribed: "#64748b",
+  Unknown: "#9333ea",
 };
 
 const priorityColours = {
@@ -85,6 +58,11 @@ const communityStatusColours = {
   "Full Evacuation": "#dc2626",
   "Re-entry": "#0ea5e9",
 };
+
+const smokeOverlayBounds = [
+  [20, -170],
+  [75, -40],
+];
 
 function useStoredState(key, initialValue) {
   const [value, setValue] = useState(() => {
@@ -114,11 +92,39 @@ function nowDate() {
   return new Date().toLocaleDateString("en-CA");
 }
 
+function formatFireDate(value) {
+  if (!value) return "Not listed";
+  try {
+    return new Date(value).toLocaleDateString("en-CA");
+  } catch {
+    return "Not listed";
+  }
+}
+
+function formatSmokeTimestamp(date) {
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  const hour = String(date.getUTCHours()).padStart(2, "0");
+  return `${year}${month}${day}${hour}00`;
+}
+
+function getRoundedSmokeBaseTime() {
+  const now = new Date();
+  now.setUTCMinutes(0, 0, 0);
+  return now;
+}
+
+function buildSmokeForecastUrl(offsetHours) {
+  const smokeTime = getRoundedSmokeBaseTime();
+  smokeTime.setUTCHours(smokeTime.getUTCHours() + offsetHours);
+  return `https://firesmoke.ca/forecasts/current/images/hourly_${formatSmokeTimestamp(smokeTime)}.png`;
+}
+
 function getDistanceKm(lat1, lon1, lat2, lon2) {
   const R = 6371;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
   const dLon = ((lon2 - lon1) * Math.PI) / 180;
-
   const a =
     Math.sin(dLat / 2) ** 2 +
     Math.cos((lat1 * Math.PI) / 180) *
@@ -128,36 +134,16 @@ function getDistanceKm(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-function getCommunityData(community) {
-  let closestDistance = 9999;
-  let closestFire = null;
+function convertCWFISStatus(status) {
+  const cleanStatus = String(status || "").trim().toUpperCase();
 
-  wildfires.forEach((fire) => {
-    const distance = getDistanceKm(
-      community.position[0],
-      community.position[1],
-      fire.position[0],
-      fire.position[1]
-    );
+  if (cleanStatus === "OC" || cleanStatus.includes("OUT")) return "Out of Control";
+  if (cleanStatus === "BH" || cleanStatus.includes("BEING HELD")) return "Being Held";
+  if (cleanStatus === "UC" || cleanStatus.includes("UNDER")) return "Under Control";
+  if (cleanStatus.includes("PRESCRIBED")) return "Prescribed";
+  if (cleanStatus.includes("MONITOR")) return "Monitored";
 
-    if (distance < closestDistance) {
-      closestDistance = distance;
-      closestFire = fire;
-    }
-  });
-
-  let status = "Under Control";
-
-  if (closestDistance <= 25) status = "Out of Control";
-  else if (closestDistance <= 30) status = "Being Held";
-  else if (closestDistance <= 50) status = "Monitored";
-
-  return {
-    ...community,
-    status,
-    closestDistance: closestDistance.toFixed(1),
-    closestFire,
-  };
+  return "Unknown";
 }
 
 function getAirQuality(pm) {
@@ -169,25 +155,10 @@ function getAirQuality(pm) {
 
   if (value <= 12) return { label: "Good", color: "#22c55e" };
   if (value <= 35) return { label: "Moderate", color: "#facc15" };
-  if (value <= 55)
-    return { label: "Unhealthy for Sensitive Groups", color: "#f97316" };
+  if (value <= 55) return { label: "Unhealthy for Sensitive Groups", color: "#f97316" };
   if (value <= 150) return { label: "Unhealthy", color: "#dc2626" };
 
   return { label: "Very Unhealthy", color: "#7e22ce" };
-}
-
-function MapFlyTo({ community, selectedCommunityName }) {
-  const map = useMap();
-
-  useEffect(() => {
-    if (!community) return;
-
-    map.flyTo(community.position, 9, {
-      duration: 1.2,
-    });
-  }, [selectedCommunityName]);
-
-  return null;
 }
 
 function Card({ children, style = {} }) {
@@ -283,16 +254,28 @@ function DataSection({
   function deleteRecord(recordId) {
     const confirmed = window.confirm(`Delete this ${title.toLowerCase()} record?`);
     if (!confirmed) return;
-
     setRecords(records.filter((record) => record.id !== recordId));
   }
 
   return (
-    <div style={{ padding: "24px", background: "#f3f4f6", minHeight: "calc(100vh - 56px)" }}>
+    <div
+      style={{
+        padding: "24px",
+        background: "#f3f4f6",
+        minHeight: "calc(100vh - 56px)",
+      }}
+    >
       <h2>{title}</h2>
       <p style={{ color: "#4b5563", maxWidth: "900px" }}>{description}</p>
 
-      <div style={{ display: "grid", gridTemplateColumns: "380px 1fr", gap: "20px", marginTop: "20px" }}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "380px 1fr",
+          gap: "20px",
+          marginTop: "20px",
+        }}
+      >
         <Card>
           <h3>Add Record</h3>
 
@@ -315,7 +298,12 @@ function DataSection({
                   value={form[field.name] || ""}
                   onChange={(event) => updateForm(field.name, event.target.value)}
                   placeholder={field.placeholder || ""}
-                  style={{ width: "100%", minHeight: "110px", padding: "10px", marginTop: "4px" }}
+                  style={{
+                    width: "100%",
+                    minHeight: "110px",
+                    padding: "10px",
+                    marginTop: "4px",
+                  }}
                 />
               ) : (
                 <input
@@ -328,7 +316,10 @@ function DataSection({
             </div>
           ))}
 
-          <button onClick={addRecord} style={{ ...buttonStyle("#111827"), width: "100%" }}>
+          <button
+            onClick={addRecord}
+            style={{ ...buttonStyle("#111827"), width: "100%" }}
+          >
             Add Record
           </button>
         </Card>
@@ -342,7 +333,9 @@ function DataSection({
             records.map((record) => {
               const isEditing = editingId === record.id;
               const borderColour =
-                colourField && colourMap ? colourMap[record[colourField]] || "#2563eb" : "#2563eb";
+                colourField && colourMap
+                  ? colourMap[record[colourField]] || "#2563eb"
+                  : "#2563eb";
 
               return (
                 <div
@@ -364,8 +357,14 @@ function DataSection({
                           {field.type === "select" ? (
                             <select
                               value={editForm[field.name] || ""}
-                              onChange={(event) => updateEditForm(field.name, event.target.value)}
-                              style={{ width: "100%", padding: "8px", marginTop: "4px" }}
+                              onChange={(event) =>
+                                updateEditForm(field.name, event.target.value)
+                              }
+                              style={{
+                                width: "100%",
+                                padding: "8px",
+                                marginTop: "4px",
+                              }}
                             >
                               {field.options.map((option) => (
                                 <option key={option}>{option}</option>
@@ -374,14 +373,27 @@ function DataSection({
                           ) : field.type === "textarea" ? (
                             <textarea
                               value={editForm[field.name] || ""}
-                              onChange={(event) => updateEditForm(field.name, event.target.value)}
-                              style={{ width: "100%", minHeight: "90px", padding: "8px", marginTop: "4px" }}
+                              onChange={(event) =>
+                                updateEditForm(field.name, event.target.value)
+                              }
+                              style={{
+                                width: "100%",
+                                minHeight: "90px",
+                                padding: "8px",
+                                marginTop: "4px",
+                              }}
                             />
                           ) : (
                             <input
                               value={editForm[field.name] || ""}
-                              onChange={(event) => updateEditForm(field.name, event.target.value)}
-                              style={{ width: "100%", padding: "8px", marginTop: "4px" }}
+                              onChange={(event) =>
+                                updateEditForm(field.name, event.target.value)
+                              }
+                              style={{
+                                width: "100%",
+                                padding: "8px",
+                                marginTop: "4px",
+                              }}
                             />
                           )}
                         </div>
@@ -397,8 +409,12 @@ function DataSection({
                   ) : (
                     <>
                       <strong>
-                        {record.priority || record.status || record.type || record.category || title}{" "}
-                        {record.community ? `| ${record.community}` : ""}
+                        {record.priority ||
+                          record.status ||
+                          record.type ||
+                          record.category ||
+                          title}
+                        {record.community ? ` | ${record.community}` : ""}
                       </strong>
 
                       <div style={{ color: "#6b7280", fontSize: "13px" }}>
@@ -439,28 +455,19 @@ function DataSection({
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("Situation Map");
+  
 
   const [operationNotes, setOperationNotes] = useStoredState("operationNotes", []);
   const [resources, setResources] = useStoredState("resources", []);
   const [evacuations, setEvacuations] = useStoredState("evacuations", []);
   const [reports, setReports] = useStoredState("reports", []);
-  const [communityStatuses, setCommunityStatuses] = useStoredState(
-    "communityStatuses",
-    communities.map((community) => ({
-      id: community.name,
-      community: community.name,
-      status: "Normal",
-      note: "",
-      date: nowDate(),
-      time: nowTime(),
-    }))
-  );
 
   const [showCommunities, setShowCommunities] = useState(true);
-  const [showWildfires, setShowWildfires] = useState(true);
+  const [showCWFIS, setShowCWFIS] = useState(true);
   const [showBuffers, setShowBuffers] = useState(true);
   const [showAirQuality, setShowAirQuality] = useState(true);
   const [showFIRMS, setShowFIRMS] = useState(true);
+  const [showSmokeForecast, setShowSmokeForecast] = useState(true);
 
   const [selectedCommunityName, setSelectedCommunityName] = useState("Poplar River First Nation");
 
@@ -472,16 +479,66 @@ export default function App() {
   const [firmsStatus, setFirmsStatus] = useState("Not loaded");
   const [firmsLastLoaded, setFirmsLastLoaded] = useState("Not loaded");
 
+  const [cwfisWildfires, setCwfisWildfires] = useState([]);
+  const [cwfisStatus, setCwfisStatus] = useState("Not loaded");
+  const [cwfisLastLoaded, setCwfisLastLoaded] = useState("Not loaded");
+
   const [weatherAlerts, setWeatherAlerts] = useState([]);
   const [weatherStatus, setWeatherStatus] = useState("Not loaded");
   const [weatherLastLoaded, setWeatherLastLoaded] = useState("Not loaded");
 
+  const [smokeHourOffset, setSmokeHourOffset] = useState(0);
+
   const initialLoadDone = useRef(false);
+  const windyStartedRef = useRef(false);
+
+  const smokeForecastUrl = buildSmokeForecastUrl(smokeHourOffset);
+
+  const officialWildfireData = cwfisWildfires.map((fire) => ({
+    fireNumber: fire.fireName,
+    position: [fire.latitude, fire.longitude],
+    status: fire.stage,
+    size: `${fire.hectares} ha`,
+    response: fire.agency,
+  }));
+
+  function getCommunityData(community) {
+    let closestDistance = 9999;
+    let closestFire = null;
+
+    officialWildfireData.forEach((fire) => {
+      const distance = getDistanceKm(
+        community.position[0],
+        community.position[1],
+        fire.position[0],
+        fire.position[1]
+      );
+
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestFire = fire;
+      }
+    });
+
+    let status = "Under Control";
+
+    if (closestDistance <= 20) status = "Out of Control";
+    else if (closestDistance <= 30) status = "Being Held";
+    else if (closestDistance <= 40) status = "Monitored";
+
+    return {
+      ...community,
+      status,
+      closestDistance: closestFire ? closestDistance.toFixed(1) : "N/A",
+      closestFire,
+    };
+  }
 
   const communityData = communities.map(getCommunityData);
 
   const selectedCommunity =
-    communityData.find((community) => community.name === selectedCommunityName) || communityData[0];
+    communityData.find((community) => community.name === selectedCommunityName) ||
+    communityData[0];
 
   const selectedCommunityAirQuality =
     selectedCommunity.name === brokenheadSensor.communityName ? airQualityData : null;
@@ -491,13 +548,12 @@ export default function App() {
     : null;
 
   const communitiesOfConcern = [...communityData]
-    .filter((community) => community.status !== "Under Control")
-    .sort((a, b) => {
-      if (statusRank[b.status] !== statusRank[a.status]) {
-        return statusRank[b.status] - statusRank[a.status];
-      }
-      return Number(a.closestDistance) - Number(b.closestDistance);
-    });
+    .filter(
+      (community) =>
+        community.closestFire &&
+        Number(community.closestDistance) <= 100
+    )
+    .sort((a, b) => Number(a.closestDistance) - Number(b.closestDistance));
 
   async function loadAirQuality() {
     try {
@@ -583,6 +639,67 @@ export default function App() {
     }
   }
 
+  async function loadCWFISWildfires() {
+    try {
+      setCwfisStatus("Loading CWFIS active wildfire data...");
+
+      const url =
+        "https://geoserver.cwfif.nrcan.gc.ca/geoserver/wfs?" +
+        "service=WFS&" +
+        "version=2.0.1&" +
+        "request=GetFeature&" +
+        "typeName=public:cwfif_national_activefires&" +
+        "outputFormat=application/json&" +
+        "srsName=EPSG:4326&" +
+        "sortBy=agency_code+A,record_start+D&" +
+        "CQL_FILTER=now()%3E=record_start%20AND%20now()%3C=record_end";
+
+      const response = await fetch(url);
+
+      if (!response.ok) {
+        setCwfisStatus(`CWFIS request failed: ${response.status}`);
+        return;
+      }
+
+      const data = await response.json();
+      const features = data.features || [];
+
+      const fires = features
+        .map((feature, index) => {
+          const p = feature.properties || {};
+
+          return {
+            id: feature.id || p.id || index,
+            fireName: p.agency_fire_id || p.national_fire_id || "Unnamed Fire",
+            latitude: Number(p.latitude),
+            longitude: Number(p.longitude),
+            hectares: p.fire_size || 0,
+            stage: convertCWFISStatus(p.stage_of_control_status),
+            agency: p.agency_code || "Unknown",
+            startDate: p.record_start || null,
+            responseType: p.response_type || "Not listed",
+            cause: p.national_fire_cause || "Not listed",
+            percentContained: p.percent_contained,
+          };
+        })
+        .filter(
+          (fire) =>
+            Number.isFinite(fire.latitude) &&
+            Number.isFinite(fire.longitude) &&
+            fire.latitude >= 40 &&
+            fire.latitude <= 85 &&
+            fire.longitude >= -150 &&
+            fire.longitude <= -40
+        );
+
+      setCwfisWildfires(fires);
+      setCwfisStatus(`Loaded ${fires.length} active fires`);
+      setCwfisLastLoaded(nowTime());
+    } catch (error) {
+      setCwfisStatus(`Error: ${error.message}`);
+    }
+  }
+
   async function loadWeatherAlerts() {
     try {
       setWeatherStatus("Loading Environment Canada alerts...");
@@ -612,6 +729,7 @@ export default function App() {
   async function refreshAllLiveData() {
     await loadAirQuality();
     await loadFIRMS();
+    await loadCWFISWildfires();
     await loadWeatherAlerts();
   }
 
@@ -624,59 +742,69 @@ export default function App() {
 
     const airQualityInterval = setInterval(loadAirQuality, 5 * 60 * 1000);
     const firmsInterval = setInterval(loadFIRMS, 15 * 60 * 1000);
+    const cwfisInterval = setInterval(loadCWFISWildfires, 15 * 60 * 1000);
     const weatherInterval = setInterval(loadWeatherAlerts, 15 * 60 * 1000);
 
     return () => {
       clearInterval(airQualityInterval);
       clearInterval(firmsInterval);
+      clearInterval(cwfisInterval);
       clearInterval(weatherInterval);
     };
   }, []);
 
+  
   const aq = airQualityData ? getAirQuality(airQualityData["pm2.5_atm"]) : null;
 
-  const tabs = ["Situation Map", "Operations", "Resources", "Evacuation", "Reports"];
-
-  function updateCommunityStatus(id, field, value) {
-    setCommunityStatuses(
-      communityStatuses.map((record) =>
-        record.id === id
-          ? {
-              ...record,
-              [field]: value,
-              editedDate: nowDate(),
-              editedTime: nowTime(),
-            }
-          : record
-      )
-    );
-  }
+  const tabs = [
+    "Situation Map",
+    "Wind Forecast",
+    "Operations",
+    "Resources",
+    "Evacuation",
+    "Reports",
+  ];
 
   function generateReportSummary() {
-    const criticalNotes = operationNotes.filter((note) => note.priority === "Critical");
-    const openTasks = operationNotes.filter((note) => note.priority === "Action");
+    const criticalNotes = operationNotes.filter(
+      (note) => note.priority === "Critical"
+    );
 
-    return `Operational Briefing Summary
+    const actionNotes = operationNotes.filter(
+      (note) => note.priority === "Action"
+    );
+
+    return `SERDC Operational Briefing
 Date: ${nowDate()}
 Time: ${nowTime()}
 
-Live Data:
-- Air Quality: ${airQualityStatus}, last loaded ${airQualityLastLoaded}${
+Live Systems:
+- Air Quality: ${airQualityStatus}
+- Last AQ Update: ${airQualityLastLoaded}
+${
   airQualityData && aq
-    ? `, Brokenhead Health Center PM2.5: ${airQualityData["pm2.5_atm"]}, PM-based air quality: ${aq.label}`
-    : ", no air quality value loaded"
+    ? `- Brokenhead PM2.5: ${airQualityData["pm2.5_atm"]}
+- PM-Based Air Quality: ${aq.label}`
+    : "- No air quality values loaded"
 }
-- FIRMS: ${firmsStatus}, last loaded ${firmsLastLoaded}
-- Weather Alerts: ${weatherStatus}, last loaded ${weatherLastLoaded}
+
+- FIRMS Hotspots: ${firmsStatus}
+- Last FIRMS Update: ${firmsLastLoaded}
+
+- CWFIS Wildfires: ${cwfisStatus}
+- Last CWFIS Update: ${cwfisLastLoaded}
+
+- Weather Alerts: ${weatherStatus}
+- Last Weather Update: ${weatherLastLoaded}
 
 Communities of Concern:
 ${
   communitiesOfConcern.length === 0
-    ? "- No communities currently within wildfire trigger zones."
+    ? "- No communities currently flagged."
     : communitiesOfConcern
         .map(
           (community) =>
-            `- ${community.name}: ${community.status}, closest fire ${community.closestFire?.fireNumber}, ${community.closestDistance} km`
+            `- ${community.name}: ${community.status} (${community.closestDistance} km from ${community.closestFire?.fireNumber})`
         )
         .join("\n")
 }
@@ -684,15 +812,15 @@ ${
 Critical Notes:
 ${
   criticalNotes.length === 0
-    ? "- None recorded."
-    : criticalNotes.map((note) => `- ${note.community}: ${note.text}`).join("\n")
+    ? "- None"
+    : criticalNotes.map((note) => `- ${note.community}: ${note.details}`).join("\n")
 }
 
 Action Items:
 ${
-  openTasks.length === 0
-    ? "- None recorded."
-    : openTasks.map((note) => `- ${note.community}: ${note.text}`).join("\n")
+  actionNotes.length === 0
+    ? "- None"
+    : actionNotes.map((note) => `- ${note.community}: ${note.details}`).join("\n")
 }
 `;
   }
@@ -733,7 +861,13 @@ ${
       </div>
 
       {activeTab === "Situation Map" && (
-        <div style={{ display: "flex", height: "calc(100vh - 56px)", width: "100%" }}>
+        <div
+          style={{
+            display: "flex",
+            height: "calc(100vh - 56px)",
+            width: "100%",
+          }}
+        >
           <div
             style={{
               width: "410px",
@@ -764,18 +898,19 @@ ${
 
             <Card
               style={{
-                border: `3px solid ${fireViewColours[selectedCommunity.status]}`,
+                border: `3px solid ${fireColours[selectedCommunity.status]}`,
                 marginBottom: "16px",
               }}
             >
               <h3 style={{ marginTop: 0 }}>Selected Community</h3>
+
               <strong>{selectedCommunity.name}</strong>
 
               <div>
                 Wildfire Status:{" "}
                 <span
                   style={{
-                    color: fireViewColours[selectedCommunity.status],
+                    color: fireColours[selectedCommunity.status],
                     fontWeight: "bold",
                   }}
                 >
@@ -783,7 +918,7 @@ ${
                 </span>
               </div>
 
-              <div>Closest Fire: {selectedCommunity.closestFire?.fireNumber}</div>
+              <div>Closest Fire: {selectedCommunity.closestFire?.fireNumber || "No active fire loaded"}</div>
               <div>Distance: {selectedCommunity.closestDistance} km</div>
 
               {selectedCommunityAQ && (
@@ -804,88 +939,175 @@ ${
 
             <h3>Live Data</h3>
 
-<button
-  onClick={loadAirQuality}
-  style={{
-    width: "100%",
-    padding: "10px",
-    background: "#0369a1",
-    color: "white",
-    border: "none",
-    borderRadius: "8px",
-    cursor: "pointer",
-    fontWeight: "bold",
-    marginBottom: "10px",
-  }}
->
-  Load Air Quality
-</button>
+            <button
+              onClick={loadAirQuality}
+              style={{
+                width: "100%",
+                padding: "10px",
+                background: "#0369a1",
+                color: "white",
+                border: "none",
+                borderRadius: "8px",
+                cursor: "pointer",
+                fontWeight: "bold",
+                marginBottom: "10px",
+              }}
+            >
+              Load Air Quality
+            </button>
 
-<div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: "8px", padding: "10px", marginBottom: "10px" }}>
-  <strong>Air Quality:</strong> {airQualityStatus}
-  <br />
-  <strong>Last Loaded:</strong> {airQualityLastLoaded}
-  <br />
-  {airQualityData && aq && (
-    <>
-      <strong>PM2.5:</strong> {airQualityData["pm2.5_atm"]}
-      <br />
-      <strong>Air Quality:</strong>{" "}
-      <span style={{ color: aq.color, fontWeight: "bold" }}>{aq.label}</span>
-    </>
-  )}
-</div>
+            <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: "8px", padding: "10px", marginBottom: "10px" }}>
+              <strong>Air Quality:</strong> {airQualityStatus}
+              <br />
+              <strong>Last Loaded:</strong> {airQualityLastLoaded}
+              <br />
+              {airQualityData && aq && (
+                <>
+                  <strong>PM2.5:</strong> {airQualityData["pm2.5_atm"]}
+                  <br />
+                  <strong>Air Quality:</strong>{" "}
+                  <span style={{ color: aq.color, fontWeight: "bold" }}>
+                    {aq.label}
+                  </span>
+                </>
+              )}
+            </div>
 
-<button
-  onClick={loadFIRMS}
-  style={{
-    width: "100%",
-    padding: "10px",
-    background: "#c2410c",
-    color: "white",
-    border: "none",
-    borderRadius: "8px",
-    cursor: "pointer",
-    fontWeight: "bold",
-    marginBottom: "10px",
-  }}
->
-  Load FIRMS Hotspots
-</button>
+            <button
+              onClick={loadFIRMS}
+              style={{
+                width: "100%",
+                padding: "10px",
+                background: "#c2410c",
+                color: "white",
+                border: "none",
+                borderRadius: "8px",
+                cursor: "pointer",
+                fontWeight: "bold",
+                marginBottom: "10px",
+              }}
+            >
+              Load FIRMS Hotspots
+            </button>
 
-<div style={{ background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: "8px", padding: "10px", marginBottom: "10px" }}>
-  <strong>FIRMS:</strong> {firmsStatus}
-  <br />
-  <strong>Last Loaded:</strong> {firmsLastLoaded}
-</div>
+            <div style={{ background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: "8px", padding: "10px", marginBottom: "10px" }}>
+              <strong>FIRMS:</strong> {firmsStatus}
+              <br />
+              <strong>Last Loaded:</strong> {firmsLastLoaded}
+            </div>
 
-<button
-  onClick={loadWeatherAlerts}
-  style={{
-    width: "100%",
-    padding: "10px",
-    background: "#7c3aed",
-    color: "white",
-    border: "none",
-    borderRadius: "8px",
-    cursor: "pointer",
-    fontWeight: "bold",
-    marginBottom: "10px",
-  }}
->
-  Load Weather Alerts
-</button>
+            <button
+              onClick={loadCWFISWildfires}
+              style={{
+                width: "100%",
+                padding: "10px",
+                background: "#991b1b",
+                color: "white",
+                border: "none",
+                borderRadius: "8px",
+                cursor: "pointer",
+                fontWeight: "bold",
+                marginBottom: "10px",
+              }}
+            >
+              Load Wildfire Information
+            </button>
 
-<div style={{ background: "#f5f3ff", border: "1px solid #ddd6fe", borderRadius: "8px", padding: "10px", marginBottom: "16px" }}>
-  <strong>Weather Alerts:</strong> {weatherStatus}
-  <br />
-  <strong>Last Loaded:</strong> {weatherLastLoaded}
-</div>
+            <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: "8px", padding: "10px", marginBottom: "10px" }}>
+              <strong>Wildfires:</strong> {cwfisStatus}
+              <br />
+              <strong>Last Loaded:</strong> {cwfisLastLoaded}
+            </div>
+
+            <button
+              onClick={loadWeatherAlerts}
+              style={{
+                width: "100%",
+                padding: "10px",
+                background: "#7c3aed",
+                color: "white",
+                border: "none",
+                borderRadius: "8px",
+                cursor: "pointer",
+                fontWeight: "bold",
+                marginBottom: "10px",
+              }}
+            >
+              Load Weather Alerts
+            </button>
+
+            <div style={{ background: "#f5f3ff", border: "1px solid #ddd6fe", borderRadius: "8px", padding: "10px", marginBottom: "10px" }}>
+              <strong>Weather Alerts:</strong> {weatherStatus}
+              <br />
+              <strong>Last Loaded:</strong> {weatherLastLoaded}
+            </div>
+
+            <div style={{ background: "#ecfeff", border: "1px solid #a5f3fc", borderRadius: "8px", padding: "10px", marginBottom: "16px" }}>
+              <strong>Smoke Forecast:</strong>{" "}
+              {smokeHourOffset === 0
+                ? "Current forecast hour"
+                : `${smokeHourOffset > 0 ? "+" : ""}${smokeHourOffset} hours`}
+              <br />
+              <strong>Image:</strong> hourly_
+              {formatSmokeTimestamp(
+                new Date(
+                  getRoundedSmokeBaseTime().getTime() +
+                    smokeHourOffset * 60 * 60 * 1000
+                )
+              )}
+              .png
+
+              <div style={{ marginTop: "10px" }}>
+                <button
+                  onClick={() => setSmokeHourOffset(smokeHourOffset - 1)}
+                  style={{
+                    padding: "8px 10px",
+                    background: "#475569",
+                    color: "white",
+                    border: "none",
+                    borderRadius: "6px",
+                    marginRight: "8px",
+                    cursor: "pointer",
+                  }}
+                >
+                  Previous Hour
+                </button>
+
+                <button
+                  onClick={() => setSmokeHourOffset(smokeHourOffset + 1)}
+                  style={{
+                    padding: "8px 10px",
+                    background: "#0f766e",
+                    color: "white",
+                    border: "none",
+                    borderRadius: "6px",
+                    cursor: "pointer",
+                  }}
+                >
+                  Next Hour
+                </button>
+
+                <button
+                  onClick={() => setSmokeHourOffset(0)}
+                  style={{
+                    padding: "8px 10px",
+                    background: "#111827",
+                    color: "white",
+                    border: "none",
+                    borderRadius: "6px",
+                    marginLeft: "8px",
+                    cursor: "pointer",
+                  }}
+                >
+                  Reset
+                </button>
+              </div>
+            </div>
 
             <h3>Communities of Concern</h3>
 
             {communitiesOfConcern.length === 0 ? (
-              <p>No communities currently within wildfire trigger zones.</p>
+              <p>No communities currently within 100 km of a loaded active wildfire.</p>
             ) : (
               communitiesOfConcern.map((community) => {
                 const isSelected = community.name === selectedCommunity.name;
@@ -898,7 +1120,7 @@ ${
                       width: "100%",
                       textAlign: "left",
                       border: `2px solid ${
-                        isSelected ? "#111827" : fireViewColours[community.status]
+                        isSelected ? "#111827" : fireColours[community.status]
                       }`,
                       borderRadius: "10px",
                       padding: "10px",
@@ -940,6 +1162,7 @@ ${
                 >
                   <strong>{community.name}</strong>
                   <div>Status: {community.status}</div>
+                  <div>Closest Fire: {community.closestFire?.fireNumber || "None loaded"}</div>
                   <div>Distance: {community.closestDistance} km</div>
                 </button>
               );
@@ -947,43 +1170,91 @@ ${
           </div>
 
           <div style={{ flex: 1, position: "relative" }}>
-            <MapContainer center={[51.9, -96.5]} zoom={6} style={{ height: "100%", width: "100%" }}>
-              <MapFlyTo community={selectedCommunity} selectedCommunityName={selectedCommunityName} />
-
+            <MapContainer
+              center={[51.9, -96.5]}
+              zoom={6}
+              style={{ height: "100%", width: "100%" }}
+            >
               <TileLayer
                 attribution="&copy; OpenStreetMap contributors"
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               />
 
-              {showWildfires &&
-                wildfires.map((fire) => (
-                  <React.Fragment key={fire.fireNumber}>
+              {showSmokeForecast && (
+                <ImageOverlay
+                  url={smokeForecastUrl}
+                  bounds={smokeOverlayBounds}
+                  opacity={0.55}
+                />
+              )}
+
+              {showCWFIS &&
+                cwfisWildfires.map((fire) => (
+                  <React.Fragment key={fire.id}>
                     {showBuffers && (
                       <>
-                        <Circle center={fire.position} radius={50000} pathOptions={{ color: "#facc15", fillColor: "#facc15", fillOpacity: 0.08, weight: 1 }} />
-                        <Circle center={fire.position} radius={30000} pathOptions={{ color: "#f97316", fillColor: "#f97316", fillOpacity: 0.1, weight: 1 }} />
-                        <Circle center={fire.position} radius={25000} pathOptions={{ color: "#dc2626", fillColor: "#dc2626", fillOpacity: 0.12, weight: 1 }} />
+                        <Circle
+                          center={[fire.latitude, fire.longitude]}
+                          radius={40000}
+                          pathOptions={{
+                            color: "#facc15",
+                            fillColor: "#facc15",
+                            fillOpacity: 0.08,
+                            weight: 1,
+                          }}
+                        />
+                        <Circle
+                          center={[fire.latitude, fire.longitude]}
+                          radius={30000}
+                          pathOptions={{
+                            color: "#f97316",
+                            fillColor: "#f97316",
+                            fillOpacity: 0.1,
+                            weight: 1,
+                          }}
+                        />
+                        <Circle
+                          center={[fire.latitude, fire.longitude]}
+                          radius={20000}
+                          pathOptions={{
+                            color: "#dc2626",
+                            fillColor: "#dc2626",
+                            fillOpacity: 0.12,
+                            weight: 1,
+                          }}
+                        />
                       </>
                     )}
 
                     <CircleMarker
-                      center={fire.position}
-                      radius={12}
+                      center={[fire.latitude, fire.longitude]}
+                      radius={10}
                       pathOptions={{
                         color: "#111827",
                         weight: 2,
-                        fillColor: fireViewColours[fire.status],
+                        fillColor: fireColours[fire.stage] || "#9333ea",
                         fillOpacity: 0.95,
                       }}
                     >
                       <Popup>
-                        <strong>{fire.fireNumber}</strong>
+                        <strong>{fire.fireName}</strong>
                         <br />
-                        Status: {fire.status}
+                        Agency: {fire.agency}
                         <br />
-                        Size: {fire.size}
+                        Status: {fire.stage}
                         <br />
-                        Response: {fire.response}
+                        Size: {fire.hectares} ha
+                        <br />
+                        Response: {fire.responseType}
+                        <br />
+                        Cause: {fire.cause}
+                        <br />
+                        Containment:{" "}
+                        {fire.percentContained >= 0
+                          ? `${fire.percentContained}%`
+                          : "Not listed"}
+                        <br />
+                        Start Date: {formatFireDate(fire.startDate)}
                       </Popup>
                     </CircleMarker>
                   </React.Fragment>
@@ -1013,7 +1284,7 @@ ${
                         <br />
                         Wildfire Status: {community.status}
                         <br />
-                        Closest Fire: {community.closestFire?.fireNumber}
+                        Closest Fire: {community.closestFire?.fireNumber || "None loaded"}
                         <br />
                         Distance: {community.closestDistance} km
                       </Popup>
@@ -1060,10 +1331,6 @@ ${
                       <br />
                       Confidence: {hotspot.confidence}
                       <br />
-                      Satellite: {hotspot.satellite}
-                      <br />
-                      Instrument: {hotspot.instrument}
-                      <br />
                       Brightness: {hotspot.brightness}
                       <br />
                       FRP: {hotspot.frp}
@@ -1085,46 +1352,111 @@ ${
                 background: "white",
                 padding: "12px",
                 borderRadius: "10px",
-                width: "240px",
+                width: "255px",
                 boxShadow: "0 2px 10px rgba(0,0,0,0.2)",
                 fontSize: "14px",
               }}
             >
               <h3 style={{ marginTop: 0 }}>Map Legend</h3>
-              <div>🔴 Fire: Out of Control</div>
-              <div>🟡 Fire: Being Held</div>
-              <div>🟣 Fire: Monitored</div>
-              <div>🟢 Fire: Under Control</div>
+              <div>🔴 Out of Control</div>
+              <div>🟡 Being Held</div>
+              <div>🟣 Monitored / Unknown</div>
+              <div>🟢 Under Control</div>
               <div>🔵 Community</div>
               <div>🟠 FIRMS Hotspot</div>
 
               <hr />
 
-              <h4>Layers</h4>
+              <h4>Operational Layers</h4>
 
               <label>
-                <input type="checkbox" checked={showCommunities} onChange={() => setShowCommunities(!showCommunities)} /> Communities
+                <input
+                  type="checkbox"
+                  checked={showCommunities}
+                  onChange={() => setShowCommunities(!showCommunities)}
+                />{" "}
+                Communities
               </label>
+
               <br />
+
               <label>
-                <input type="checkbox" checked={showWildfires} onChange={() => setShowWildfires(!showWildfires)} /> Wildfires
+                <input
+                  type="checkbox"
+                  checked={showCWFIS}
+                  onChange={() => setShowCWFIS(!showCWFIS)}
+                />{" "}
+                Active Wildfires
               </label>
+
               <br />
+
               <label>
-                <input type="checkbox" checked={showBuffers} onChange={() => setShowBuffers(!showBuffers)} /> Buffers
+                <input
+                  type="checkbox"
+                  checked={showBuffers}
+                  onChange={() => setShowBuffers(!showBuffers)}
+                />{" "}
+                Wildfire Threat Buffers
               </label>
+
               <br />
+
               <label>
-                <input type="checkbox" checked={showAirQuality} onChange={() => setShowAirQuality(!showAirQuality)} /> Air Quality
+                <input
+                  type="checkbox"
+                  checked={showFIRMS}
+                  onChange={() => setShowFIRMS(!showFIRMS)}
+                />{" "}
+                FIRMS Hotspots
               </label>
+
               <br />
+
               <label>
-                <input type="checkbox" checked={showFIRMS} onChange={() => setShowFIRMS(!showFIRMS)} /> FIRMS Hotspots
+                <input
+                  type="checkbox"
+                  checked={showSmokeForecast}
+                  onChange={() => setShowSmokeForecast(!showSmokeForecast)}
+                />{" "}
+                Smoke Forecast
+              </label>
+
+              <br />
+
+              <label>
+                <input
+                  type="checkbox"
+                  checked={showAirQuality}
+                  onChange={() => setShowAirQuality(!showAirQuality)}
+                />{" "}
+                Air Quality Sensors
               </label>
             </div>
           </div>
         </div>
       )}
+
+{activeTab === "Wind Forecast" && (
+  <div
+    style={{
+      height: "calc(100vh - 56px)",
+      width: "100%",
+      position: "relative",
+      background: "#0f172a",
+    }}
+  >
+    <iframe
+      title="Wind Forecast"
+      src="https://embed.windy.com/embed2.html?lat=51.9&lon=-96.5&detailLat=51.9&detailLon=-96.5&width=650&height=450&zoom=6&level=surface&overlay=wind&product=ecmwf&menu=&message=true&marker=&calendar=now&pressure=&type=map&location=coordinates&detail=&metricWind=km%2Fh&metricTemp=%C2%B0C&radarRange=-1"
+      style={{
+        width: "100%",
+        height: "100%",
+        border: "none",
+      }}
+    />
+  </div>
+)}
 
       {activeTab === "Operations" && (
         <DataSection
@@ -1157,7 +1489,13 @@ ${
               name: "type",
               label: "Type",
               type: "select",
-              options: ["Operational Note", "Decision", "Task", "Community Update", "Incident Log"],
+              options: [
+                "Operational Note",
+                "Decision",
+                "Task",
+                "Community Update",
+                "Incident Log",
+              ],
             },
             {
               name: "details",
@@ -1196,9 +1534,22 @@ ${
               name: "category",
               label: "Category",
               type: "select",
-              options: ["Crew", "Equipment", "Generator", "Fuel", "Aircraft", "Bus", "Reception Capacity", "Other"],
+              options: [
+                "Crew",
+                "Equipment",
+                "Generator",
+                "Fuel",
+                "Aircraft",
+                "Bus",
+                "Reception Capacity",
+                "Other",
+              ],
             },
-            { name: "name", label: "Resource Name", type: "text", placeholder: "Example: Generator, bus, crew, fuel cache" },
+            {
+              name: "name",
+              label: "Resource Name",
+              type: "text",
+            },
             {
               name: "community",
               label: "Community / Location",
@@ -1209,10 +1560,24 @@ ${
               name: "status",
               label: "Status",
               type: "select",
-              options: ["Available", "Requested", "Assigned", "Deployed", "Unavailable"],
+              options: [
+                "Available",
+                "Requested",
+                "Assigned",
+                "Deployed",
+                "Unavailable",
+              ],
             },
-            { name: "quantity", label: "Quantity / Capacity", type: "text", placeholder: "Example: 2 units, 40 seats, 500 L" },
-            { name: "notes", label: "Notes", type: "textarea", placeholder: "Enter resource notes..." },
+            {
+              name: "quantity",
+              label: "Quantity / Capacity",
+              type: "text",
+            },
+            {
+              name: "notes",
+              label: "Notes",
+              type: "textarea",
+            },
           ]}
         />
       )}
@@ -1220,7 +1585,7 @@ ${
       {activeTab === "Evacuation" && (
         <DataSection
           title="Evacuation"
-          description="Track community evacuation status, priority evacuees, transportation, reception, and re-entry."
+          description="Track evacuation readiness, transportation, and reception."
           records={evacuations}
           setRecords={setEvacuations}
           colourField="status"
@@ -1244,32 +1609,66 @@ ${
               name: "status",
               label: "Evacuation Status",
               type: "select",
-              options: ["Normal", "Monitoring", "Preparedness", "Partial Evacuation", "Full Evacuation", "Re-entry"],
+              options: [
+                "Normal",
+                "Monitoring",
+                "Preparedness",
+                "Partial Evacuation",
+                "Full Evacuation",
+                "Re-entry",
+              ],
             },
-            { name: "priorityEvacuees", label: "Priority Evacuees", type: "text", placeholder: "Example: P1 medical, elders, dialysis" },
-            { name: "transportation", label: "Transportation", type: "text", placeholder: "Example: aircraft, bus, boat, personal vehicles" },
-            { name: "receptionSite", label: "Reception Site", type: "text", placeholder: "Example: Winnipeg, Selkirk, host community" },
-            { name: "notes", label: "Notes", type: "textarea", placeholder: "Enter evacuation notes..." },
+            {
+              name: "priorityEvacuees",
+              label: "Priority Evacuees",
+              type: "text",
+            },
+            {
+              name: "transportation",
+              label: "Transportation",
+              type: "text",
+            },
+            {
+              name: "receptionSite",
+              label: "Reception Site",
+              type: "text",
+            },
+            {
+              name: "notes",
+              label: "Notes",
+              type: "textarea",
+            },
           ]}
         />
       )}
 
       {activeTab === "Reports" && (
-        <div style={{ padding: "24px", background: "#f3f4f6", minHeight: "calc(100vh - 56px)" }}>
+        <div
+          style={{
+            padding: "24px",
+            background: "#f3f4f6",
+            minHeight: "calc(100vh - 56px)",
+          }}
+        >
           <h2>Reports</h2>
-          <p style={{ color: "#4b5563" }}>
-            Build briefings, SITREPs, and operational summaries using dashboard information.
-          </p>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px", marginTop: "20px" }}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: "20px",
+              marginTop: "20px",
+            }}
+          >
             <Card>
               <h3>Generated Operational Briefing</h3>
+
               <textarea
                 readOnly
                 value={generateReportSummary()}
                 style={{
                   width: "100%",
-                  minHeight: "420px",
+                  minHeight: "520px",
                   padding: "12px",
                   fontFamily: "Arial",
                   whiteSpace: "pre-wrap",
@@ -1278,7 +1677,10 @@ ${
 
               <button
                 onClick={() => navigator.clipboard.writeText(generateReportSummary())}
-                style={{ ...buttonStyle("#111827"), marginTop: "12px" }}
+                style={{
+                  ...buttonStyle("#111827"),
+                  marginTop: "12px",
+                }}
               >
                 Copy Briefing
               </button>
@@ -1286,7 +1688,7 @@ ${
 
             <DataSection
               title="Saved Reports"
-              description="Save report drafts, SITREPs, briefings, and leadership updates."
+              description="Save report drafts, SITREPs, and briefings."
               records={reports}
               setRecords={setReports}
               colourField="type"
@@ -1306,10 +1708,23 @@ ${
                   name: "type",
                   label: "Report Type",
                   type: "select",
-                  options: ["SITREP", "Briefing", "Leadership Update", "Community Summary"],
+                  options: [
+                    "SITREP",
+                    "Briefing",
+                    "Leadership Update",
+                    "Community Summary",
+                  ],
                 },
-                { name: "title", label: "Title", type: "text", placeholder: "Example: Morning Wildfire Briefing" },
-                { name: "summary", label: "Summary", type: "textarea", placeholder: "Enter report details..." },
+                {
+                  name: "title",
+                  label: "Title",
+                  type: "text",
+                },
+                {
+                  name: "summary",
+                  label: "Summary",
+                  type: "textarea",
+                },
               ]}
             />
           </div>
