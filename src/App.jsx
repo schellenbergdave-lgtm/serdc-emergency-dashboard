@@ -262,7 +262,7 @@ function DataSection({
       style={{
         padding: "24px",
         background: "#f3f4f6",
-        minHeight: "calc(100vh - 56px)",
+        minHeight: "calc(100vh - 92px)",
       }}
     >
       <h2>{title}</h2>
@@ -490,10 +490,19 @@ export default function App() {
   const [smokeHourOffset, setSmokeHourOffset] = useState(0);
 
   const initialLoadDone = useRef(false);
-  const windyStartedRef = useRef(false);
-
   const smokeForecastUrl = buildSmokeForecastUrl(smokeHourOffset);
-
+  const [sitrepInfo, setSitrepInfo] = useStoredState("sitrepInfo", {
+    incident: "Wildfire Season",
+    reportNumber: "001",
+    issuedBy: "SERDC",
+    preparedBy: "David Schellenberg",
+    situationOverview: "",
+    weatherForecast: "",
+    receptionShelters: "",
+    evacuationsImpacts: "",
+    responseActions: "",
+    additionalNotes: "",
+  });
   const officialWildfireData = cwfisWildfires.map((fire) => ({
     fireNumber: fire.fireName,
     position: [fire.latitude, fire.longitude],
@@ -756,14 +765,23 @@ export default function App() {
   
   const aq = airQualityData ? getAirQuality(airQualityData["pm2.5_atm"]) : null;
 
-  const tabs = [
+  const mapTabs = [
     "Situation Map",
     "Wind Forecast",
+    "Weather Forecast",
+    "Smoke Forecast",
+    "Hydro Outages",
+    "Road Conditions",
+  ];
+  
+  const operationsTabs = [
     "Operations",
     "Resources",
     "Evacuation",
     "Reports",
   ];
+  
+  const tabs = [...mapTabs, ...operationsTabs];
 
   function generateReportSummary() {
     const criticalNotes = operationNotes.filter(
@@ -825,46 +843,245 @@ ${
 `;
   }
 
+  function updateSitrepField(field, value) {
+    setSitrepInfo({
+      ...sitrepInfo,
+      [field]: value,
+    });
+  }
+
+  function generateSitrepText() {
+    const firesOfNote =
+      communitiesOfConcern.length === 0
+        ? "No SERDC communities are currently within 100 km of a loaded active wildfire."
+        : communitiesOfConcern
+            .map(
+              (community) =>
+                `${community.closestFire?.fireNumber || "Unnamed Fire"}
+- Closest community: ${community.name}
+- Distance: ${community.closestDistance} km
+- Status: ${community.status}
+- Size: ${community.closestFire?.size || "Not listed"}`
+            )
+            .join("\n\n");
+
+    const airQualitySection =
+      airQualityData && aq
+        ? `Brokenhead:
+${airQualityData["pm2.5_atm"]} PM2.5 - ${aq.label}
+
+Other SERDC communities:
+Air quality values to be confirmed through AQHI, PurpleAir, or community reporting.`
+        : `Brokenhead:
+Not loaded
+
+Other SERDC communities:
+Air quality values to be confirmed through AQHI, PurpleAir, or community reporting.`;
+
+    const operationsSummary =
+      operationNotes.length === 0
+        ? "No operational notes have been entered in the Operations tab."
+        : operationNotes
+            .slice(0, 10)
+            .map(
+              (note) =>
+                `- ${note.community} | ${note.priority} | ${note.type}: ${note.details}`
+            )
+            .join("\n");
+
+    const evacuationSummary =
+      evacuations.length === 0
+        ? "No evacuation records have been entered in the Evacuation tab."
+        : evacuations
+            .map(
+              (evac) =>
+                `- ${evac.community}: ${evac.status}. Priority evacuees: ${
+                  evac.priorityEvacuees || "Not listed"
+                }. Reception site: ${evac.receptionSite || "Not listed"}. ${
+                  evac.notes || ""
+                }`
+            )
+            .join("\n");
+
+    return `Southeast Resource Development Council
+Wildfire Situation Report
+
+1. Incident / Event Information
+
+Date of Issue:
+${nowDate()}
+
+Issued By:
+${sitrepInfo.issuedBy}
+
+Prepared By:
+${sitrepInfo.preparedBy}
+
+Incident/Event:
+${sitrepInfo.incident}
+
+Report Number:
+${sitrepInfo.reportNumber}
+
+
+2. Situation Overview
+
+${sitrepInfo.situationOverview || "Situation overview to be completed."}
+
+Current Dashboard Summary:
+- CWFIS Wildfires: ${cwfisStatus}
+- FIRMS Hotspots: ${firmsStatus}
+- Weather Alerts: ${weatherStatus}
+- Communities of Concern: ${communitiesOfConcern.length}
+
+
+3. Weather & Forecast
+
+${sitrepInfo.weatherForecast || "Weather forecast to be completed."}
+
+
+4. Air Quality / Smoke
+
+${airQualitySection}
+
+Smoke Forecast:
+Smoke information is available through the Situation Map smoke overlay and the Smoke Forecast tab.
+
+
+5. Fires of Note
+
+${firesOfNote}
+
+
+6. Reception Center & Shelters
+
+${sitrepInfo.receptionShelters || "No update entered."}
+
+
+7. SERDC Evacuations & Impacts
+
+${sitrepInfo.evacuationsImpacts || evacuationSummary}
+
+
+8. Response Actions Provincial and Interagency Partners
+
+${sitrepInfo.responseActions || "No update entered."}
+
+
+9. Additional Notes / Maps / Resources
+
+${sitrepInfo.additionalNotes || "No additional notes entered."}
+
+Operational Notes:
+${operationsSummary}
+
+Reference Links:
+- Situation Map: Dashboard integrated wildfire map
+- Wind Forecast: Dashboard Wind Forecast tab
+- Weather Forecast: Dashboard Weather Forecast tab
+- Smoke Forecast: Dashboard Smoke Forecast tab
+- Manitoba 511: Dashboard Road Conditions tab
+- Manitoba Hydro: Dashboard Hydro Outages tab
+`;
+  }
+
   return (
-    <div style={{ height: "100vh", width: "100%", fontFamily: "Arial" }}>
+    <div
+      style={{
+        height: "100vh",
+        width: "100%",
+        fontFamily: "Arial",
+      }}
+    >
       <div
         style={{
-          height: "56px",
+          height: "92px",
           background: "#111827",
           color: "white",
           display: "flex",
           alignItems: "center",
           padding: "0 16px",
-          gap: "12px",
           borderBottom: "3px solid #0369a1",
+          boxSizing: "border-box",
         }}
       >
-        <strong style={{ marginRight: "16px" }}>SERDC Emergency Dashboard</strong>
+  <div
+    style={{
+      display: "flex",
+      flexDirection: "column",
+      width: "100%",
+      gap: "8px",
+    }}
+  >
+    <div
+      style={{
+        display: "flex",
+        gap: "8px",
+        alignItems: "center",
+        flexWrap: "wrap",
+      }}
+    >
+      <strong style={{ marginRight: "16px" }}>
+        SERDC Emergency Dashboard
+      </strong>
 
-        {tabs.map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            style={{
-              padding: "8px 12px",
-              borderRadius: "8px",
-              border: "none",
-              cursor: "pointer",
-              fontWeight: "bold",
-              background: activeTab === tab ? "#0ea5e9" : "#374151",
-              color: "white",
-            }}
-          >
-            {tab}
-          </button>
-        ))}
-      </div>
+      {mapTabs.map((tab) => (
+        <button
+          key={tab}
+          onClick={() => setActiveTab(tab)}
+          style={{
+            padding: "8px 12px",
+            borderRadius: "8px",
+            border: "none",
+            cursor: "pointer",
+            fontWeight: "bold",
+            background:
+              activeTab === tab ? "#0ea5e9" : "#374151",
+            color: "white",
+          }}
+        >
+          {tab}
+        </button>
+      ))}
+    </div>
+
+    <div
+      style={{
+        display: "flex",
+        gap: "8px",
+        alignItems: "center",
+        flexWrap: "wrap",
+        marginLeft: "220px",
+      }}
+    >
+      {operationsTabs.map((tab) => (
+        <button
+          key={tab}
+          onClick={() => setActiveTab(tab)}
+          style={{
+            padding: "7px 11px",
+            borderRadius: "8px",
+            border: "none",
+            cursor: "pointer",
+            fontWeight: "bold",
+            background:
+              activeTab === tab ? "#22c55e" : "#4b5563",
+            color: "white",
+          }}
+        >
+          {tab}
+        </button>
+      ))}
+    </div>
+  </div>
+</div>
+
 
       {activeTab === "Situation Map" && (
         <div
           style={{
             display: "flex",
-            height: "calc(100vh - 56px)",
+            height: "calc(100vh - 92px)",
             width: "100%",
           }}
         >
@@ -1440,7 +1657,7 @@ ${
 {activeTab === "Wind Forecast" && (
   <div
     style={{
-      height: "calc(100vh - 56px)",
+      height: "calc(100vh - 92px)",
       width: "100%",
       position: "relative",
       background: "#0f172a",
@@ -1455,6 +1672,149 @@ ${
         border: "none",
       }}
     />
+  </div>
+)}
+
+{activeTab === "Weather Forecast" && (
+  <div
+    style={{
+      height: "calc(100vh - 92px)",
+      width: "100%",
+      background: "#0f172a",
+    }}
+  >
+    <iframe
+      title="Environment Canada Weather Radar"
+      src="https://weather.gc.ca/?layers=radar&center=52,-96&zoom=6"
+      style={{
+        width: "100%",
+        height: "100%",
+        border: "none",
+      }}
+    />
+  </div>
+)}
+
+{activeTab === "Smoke Forecast" && (
+  <div
+    style={{
+      minHeight: "calc(100vh - 92px)",
+      width: "100%",
+      background: "#f3f4f6",
+      padding: "32px",
+      boxSizing: "border-box",
+    }}
+  >
+    <h2>Smoke Forecast</h2>
+
+    <p style={{ maxWidth: "850px", color: "#374151" }}>
+      FireSmoke.ca does not allow its forecast map to be embedded directly in
+      the dashboard. Use the button below to open the current smoke forecast in
+      a new tab.
+    </p>
+
+    <button
+      onClick={() =>
+        window.open(
+          "https://firesmoke.ca/forecasts/current/",
+          "_blank"
+        )
+      }
+      style={{
+        padding: "14px 18px",
+        background: "#111827",
+        color: "white",
+        border: "none",
+        borderRadius: "8px",
+        cursor: "pointer",
+        fontWeight: "bold",
+        fontSize: "16px",
+      }}
+    >
+      Open FireSmoke Forecast
+    </button>
+  </div>
+)}
+
+{activeTab === "Hydro Outages" && (
+  <div
+    style={{
+      minHeight: "calc(100vh - 92px)",
+      width: "100%",
+      background: "#f3f4f6",
+      padding: "32px",
+      boxSizing: "border-box",
+    }}
+  >
+    <h2>Hydro Outages</h2>
+
+    <p style={{ maxWidth: "850px", color: "#374151" }}>
+      Manitoba Hydro does not allow its outage map to be embedded directly in
+      the dashboard. Use the button below to open the live outage map in a new
+      tab.
+    </p>
+
+    <button
+      onClick={() =>
+        window.open(
+          "https://account.hydro.mb.ca/portal/outeroutage.aspx",
+          "_blank"
+        )
+      }
+      style={{
+        padding: "14px 18px",
+        background: "#111827",
+        color: "white",
+        border: "none",
+        borderRadius: "8px",
+        cursor: "pointer",
+        fontWeight: "bold",
+        fontSize: "16px",
+      }}
+    >
+      Open Manitoba Hydro Outage Map
+    </button>
+  </div>
+)}
+
+{activeTab === "Road Conditions" && (
+  <div
+    style={{
+      minHeight: "calc(100vh - 92px)",
+      width: "100%",
+      background: "#f3f4f6",
+      padding: "32px",
+      boxSizing: "border-box",
+    }}
+  >
+    <h2>Road Conditions</h2>
+
+    <p style={{ maxWidth: "850px", color: "#374151" }}>
+      Manitoba 511 does not allow its road conditions map to be embedded
+      directly in the dashboard. Use the button below to open the live Manitoba
+      511 map in a new tab.
+    </p>
+
+    <button
+      onClick={() =>
+        window.open(
+          "https://www.manitoba511.ca/",
+          "_blank"
+        )
+      }
+      style={{
+        padding: "14px 18px",
+        background: "#111827",
+        color: "white",
+        border: "none",
+        borderRadius: "8px",
+        cursor: "pointer",
+        fontWeight: "bold",
+        fontSize: "16px",
+      }}
+    >
+      Open Manitoba 511 Road Conditions
+    </button>
   </div>
 )}
 
@@ -1647,7 +2007,7 @@ ${
           style={{
             padding: "24px",
             background: "#f3f4f6",
-            minHeight: "calc(100vh - 56px)",
+            minHeight: "calc(100vh - 92px)",
           }}
         >
           <h2>Reports</h2>
@@ -1655,37 +2015,161 @@ ${
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "1fr 1fr",
+              gridTemplateColumns: "420px 1fr",
               gap: "20px",
               marginTop: "20px",
+              alignItems: "start",
             }}
           >
             <Card>
-              <h3>Generated Operational Briefing</h3>
+              <h3>SITREP Builder</h3>
+              <p style={{ color: "#4b5563" }}>
+                Build a SERDC Wildfire Situation Report using the dashboard data and editable narrative fields.
+              </p>
 
-              <textarea
-                readOnly
-                value={generateReportSummary()}
-                style={{
-                  width: "100%",
-                  minHeight: "520px",
-                  padding: "12px",
-                  fontFamily: "Arial",
-                  whiteSpace: "pre-wrap",
-                }}
-              />
+              <div style={{ marginBottom: "12px" }}>
+                <label style={{ fontWeight: "bold" }}>Incident / Event</label>
+                <input
+                  value={sitrepInfo.incident}
+                  onChange={(event) => updateSitrepField("incident", event.target.value)}
+                  style={{ width: "100%", padding: "10px", marginTop: "4px" }}
+                />
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                <div style={{ marginBottom: "12px" }}>
+                  <label style={{ fontWeight: "bold" }}>Report Number</label>
+                  <input
+                    value={sitrepInfo.reportNumber}
+                    onChange={(event) => updateSitrepField("reportNumber", event.target.value)}
+                    style={{ width: "100%", padding: "10px", marginTop: "4px" }}
+                  />
+                </div>
+
+                <div style={{ marginBottom: "12px" }}>
+                  <label style={{ fontWeight: "bold" }}>Issued By</label>
+                  <input
+                    value={sitrepInfo.issuedBy}
+                    onChange={(event) => updateSitrepField("issuedBy", event.target.value)}
+                    style={{ width: "100%", padding: "10px", marginTop: "4px" }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ marginBottom: "12px" }}>
+                <label style={{ fontWeight: "bold" }}>Prepared By</label>
+                <input
+                  value={sitrepInfo.preparedBy}
+                  onChange={(event) => updateSitrepField("preparedBy", event.target.value)}
+                  style={{ width: "100%", padding: "10px", marginTop: "4px" }}
+                />
+              </div>
+
+              <div style={{ marginBottom: "12px" }}>
+                <label style={{ fontWeight: "bold" }}>2. Situation Overview</label>
+                <textarea
+                  value={sitrepInfo.situationOverview}
+                  onChange={(event) => updateSitrepField("situationOverview", event.target.value)}
+                  placeholder="Enter provincial/community situation overview..."
+                  style={{ width: "100%", minHeight: "110px", padding: "10px", marginTop: "4px" }}
+                />
+              </div>
+
+              <div style={{ marginBottom: "12px" }}>
+                <label style={{ fontWeight: "bold" }}>3. Weather & Forecast</label>
+                <textarea
+                  value={sitrepInfo.weatherForecast}
+                  onChange={(event) => updateSitrepField("weatherForecast", event.target.value)}
+                  placeholder="Enter weather forecast, wind, precipitation, humidity..."
+                  style={{ width: "100%", minHeight: "110px", padding: "10px", marginTop: "4px" }}
+                />
+              </div>
+
+              <div style={{ marginBottom: "12px" }}>
+                <label style={{ fontWeight: "bold" }}>6. Reception Center & Shelters</label>
+                <textarea
+                  value={sitrepInfo.receptionShelters}
+                  onChange={(event) => updateSitrepField("receptionShelters", event.target.value)}
+                  placeholder="Enter shelter or reception centre updates..."
+                  style={{ width: "100%", minHeight: "90px", padding: "10px", marginTop: "4px" }}
+                />
+              </div>
+
+              <div style={{ marginBottom: "12px" }}>
+                <label style={{ fontWeight: "bold" }}>7. SERDC Evacuations & Impacts</label>
+                <textarea
+                  value={sitrepInfo.evacuationsImpacts}
+                  onChange={(event) => updateSitrepField("evacuationsImpacts", event.target.value)}
+                  placeholder="Enter evacuation impacts or leave blank to use Evacuation tab summary..."
+                  style={{ width: "100%", minHeight: "90px", padding: "10px", marginTop: "4px" }}
+                />
+              </div>
+
+              <div style={{ marginBottom: "12px" }}>
+                <label style={{ fontWeight: "bold" }}>8. Response Actions</label>
+                <textarea
+                  value={sitrepInfo.responseActions}
+                  onChange={(event) => updateSitrepField("responseActions", event.target.value)}
+                  placeholder="Enter ISC, CRC, MWS, OFC, SERDC, or partner updates..."
+                  style={{ width: "100%", minHeight: "110px", padding: "10px", marginTop: "4px" }}
+                />
+              </div>
+
+              <div style={{ marginBottom: "12px" }}>
+                <label style={{ fontWeight: "bold" }}>9. Additional Notes / Maps / Resources</label>
+                <textarea
+                  value={sitrepInfo.additionalNotes}
+                  onChange={(event) => updateSitrepField("additionalNotes", event.target.value)}
+                  placeholder="Enter additional notes, links, resource issues, or community-specific updates..."
+                  style={{ width: "100%", minHeight: "110px", padding: "10px", marginTop: "4px" }}
+                />
+              </div>
 
               <button
-                onClick={() => navigator.clipboard.writeText(generateReportSummary())}
-                style={{
-                  ...buttonStyle("#111827"),
-                  marginTop: "12px",
-                }}
+                onClick={() => navigator.clipboard.writeText(generateSitrepText())}
+                style={{ ...buttonStyle("#111827"), width: "100%", marginBottom: "10px" }}
               >
-                Copy Briefing
+                Copy SITREP
+              </button>
+
+              <button
+                onClick={() =>
+                  setReports([
+                    {
+                      id: Date.now(),
+                      date: nowDate(),
+                      time: nowTime(),
+                      type: "SITREP",
+                      title: `${sitrepInfo.incident} - Report ${sitrepInfo.reportNumber}`,
+                      summary: generateSitrepText(),
+                    },
+                    ...reports,
+                  ])
+                }
+                style={{ ...buttonStyle("#15803d"), width: "100%" }}
+              >
+                Save SITREP to Reports
               </button>
             </Card>
 
+            <Card>
+              <h3>SITREP Preview</h3>
+              <textarea
+                readOnly
+                value={generateSitrepText()}
+                style={{
+                  width: "100%",
+                  minHeight: "760px",
+                  padding: "12px",
+                  fontFamily: "Arial",
+                  whiteSpace: "pre-wrap",
+                  lineHeight: "1.45",
+                }}
+              />
+            </Card>
+          </div>
+
+          <div style={{ marginTop: "20px" }}>
             <DataSection
               title="Saved Reports"
               description="Save report drafts, SITREPs, and briefings."
