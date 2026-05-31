@@ -1,21 +1,22 @@
 import React from "react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   MapContainer,
   TileLayer,
   CircleMarker,
   Popup,
   Circle,
+  Rectangle,
   
 } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
-
+import useStoredState from "../hooks/useStoredState";
 import communities from "../data/communities";
 import wildfireColours from "../data/wildfireColours";
 import SectionCard from "../components/SectionCard";
 import StatusCard from "../components/StatusCard";
 
-
+const FIRMS_MAP_KEY = "e0b279fd958f3f71022f538f2f55bb00";
 
 function getDistanceKm(lat1, lon1, lat2, lon2) {
   const R = 6371;
@@ -67,7 +68,7 @@ function calculateCommunityRisk(closestFire, closestDistance) {
   if (distance <= 20) score += 70;
   else if (distance <= 30) score += 50;
   else if (distance <= 40) score += 35;
-  else if (distance <= 100) score += 15;
+  else if (distance <= 50) score += 15;
 
   if (closestFire.stage === "Out of Control") score += 25;
   else if (closestFire.stage === "Being Held") score += 15;
@@ -118,9 +119,19 @@ export default function SituationMap({ theme, darkMode }) {
   const [showBuffers, setShowBuffers] = useState(true);
   
   const [showCWFIS, setShowCWFIS] = useState(true);
-
-  const [wildfires, setWildfires] = useState([]);
+ 
+  const [wildfires, setWildfires] = useStoredState(
+    "serdcWildfires",
+    []
+  );
   const [wildfireStatus, setWildfireStatus] = useState("Not loaded");
+  const [showFIRMS, setShowFIRMS] = useState(true);
+  const [firmsHotspots, setFirmsHotspots] = useStoredState(
+    "serdcFirmsHotspots",
+    []
+  );
+const [firmsStatus, setFirmsStatus] = useState("Not loaded");
+const [firmsLastLoaded, setFirmsLastLoaded] = useState("Not loaded");
   const [lastLoaded, setLastLoaded] = useState("Not loaded");
 
   async function loadWildfires() {
@@ -186,49 +197,119 @@ export default function SituationMap({ theme, darkMode }) {
       setWildfireStatus(`Error: ${error.message}`);
     }
   }
+  async function loadFIRMS() {
+    try {
+      setFirmsStatus("Loading FIRMS hotspots...");
+  
+      const url =
+  `https://firms.modaps.eosdis.nasa.gov/api/area/csv/` +
+  `${FIRMS_MAP_KEY}/VIIRS_SNPP_NRT/-141,41,-52,84/2`;
+  
+      const response = await fetch(url);
+  
+      if (!response.ok) {
+        setFirmsStatus(`FIRMS request failed: ${response.status}`);
+        return;
+      }
+  
+      const text = await response.text();
+const rows = text.trim().split("\n");
 
-  const communityStatus = useMemo(() => {
-    return communities.map((community) => {
-      let closestDistance = 9999;
-      let closestFire = null;
+const headers = rows[0].split(",").map((header) => header.trim());
 
-      wildfires.forEach((fire) => {
-        const distance = getDistanceKm(
-          community.position[0],
-          community.position[1],
-          fire.latitude,
-          fire.longitude
-        );
+const hotspots = rows
+  .slice(1)
+  .filter((line) => line.trim() !== "")
+  .map((line, index) => {
+    const values = line.split(",");
+    const record = {};
 
-        if (distance < closestDistance) {
-          closestDistance = distance;
-          closestFire = fire;
-        }
-      });
-
-      const risk = calculateCommunityRisk(
-        closestFire,
-        closestFire ? closestDistance : null
-      );
-      
-      return {
-        ...community,
-        status: risk.level,
-        riskScore: risk.score,
-        riskLabel: risk.label,
-        closestFire,
-        closestDistance: closestFire
-          ? closestDistance.toFixed(1)
-          : "N/A",
-      };
+    headers.forEach((header, i) => {
+      record[header] = values[i];
     });
-  }, [wildfires]);
+
+    return {
+      id: index,
+      latitude: Number(record.latitude),
+      longitude: Number(record.longitude),
+      brightness: record.bright_ti4 || record.brightness || "Not listed",
+      acqDate: record.acq_date || "Not listed",
+      acqTime: record.acq_time || "Not listed",
+      satellite: record.satellite || "Not listed",
+      instrument: record.instrument || "Not listed",
+      confidence: record.confidence || "Not listed",
+      frp: record.frp || "Not listed",
+      daynight: record.daynight || "Not listed",
+    };
+  })
+  .filter(
+    (hotspot) =>
+      Number.isFinite(hotspot.latitude) &&
+      Number.isFinite(hotspot.longitude)
+  );
+  
+      setFirmsHotspots(hotspots);
+      setFirmsStatus(
+        hotspots.length === 0
+          ? "No FIRMS hotspots returned for selected area/time window."
+          : `Loaded ${hotspots.length} hotspots`
+      );
+      setFirmsLastLoaded(new Date().toLocaleTimeString("en-CA"));
+    } catch (error) {
+      setFirmsStatus(`Error: ${error.message}`);
+    }
+  }
+  const [communityStatus, setCommunityStatus] = useStoredState(
+    "serdcCommunityStatus",
+    []
+  );
+
+     
+
+      useEffect(() => {
+        const updatedCommunityStatus = communities.map((community) => {
+          let closestFire = null;
+          let closestDistance = Infinity;
+      
+          wildfires.forEach((fire) => {
+            const distance = getDistanceKm(
+              community.position[0],
+              community.position[1],
+              fire.latitude,
+              fire.longitude
+            );
+      
+            if (distance < closestDistance) {
+              closestDistance = distance;
+              closestFire = fire;
+            }
+          });
+      
+          const risk = calculateCommunityRisk(
+            closestFire,
+            closestFire ? closestDistance : null
+          );
+      
+          return {
+            ...community,
+            status: risk.level,
+            riskScore: risk.score,
+            riskLabel: risk.label,
+            closestFire,
+            closestDistance: closestFire
+              ? closestDistance.toFixed(1)
+              : "N/A",
+          };
+        });
+      
+        setCommunityStatus(updatedCommunityStatus);
+      }, [wildfires]); 
 
   const communitiesOfConcern = communityStatus
     .filter(
       (community) =>
         community.closestFire &&
-        Number(community.closestDistance) <= 100
+        Number(community.closestDistance) <= 50
     )
     .sort((a, b) => b.riskScore - a.riskScore);
 
@@ -236,13 +317,13 @@ export default function SituationMap({ theme, darkMode }) {
     Critical: "#dc2626",
     Elevated: "#f97316",
     Monitor: "#facc15",
+    Normal: "#22c55e",
     "No Active Fire Nearby": "#22c55e",
   };
 
-  useMemo(() => {
-    if (wildfireStatus === "Not loaded") {
-      loadWildfires();
-    }
+  useEffect(() => {
+    loadWildfires();
+    loadFIRMS();
   }, []);
 
   return (
@@ -282,11 +363,39 @@ export default function SituationMap({ theme, darkMode }) {
         <StatusCard
           title="Communities of Concern"
           value={communitiesOfConcern.length}
-          subtitle="Within 100 km of a loaded wildfire"
+          subtitle="Within 50 km of a loaded wildfire"
           color="#f97316"
           theme={theme}
         />
+<SectionCard theme={theme}>
+  <h3 style={{ marginTop: 0 }}>Community Risk Summary</h3>
 
+  {communitiesOfConcern.length === 0 && (
+    <div style={{ color: theme.muted }}>
+      No communities currently within 50 km of a loaded active wildfire.
+    </div>
+  )}
+
+  {communitiesOfConcern.slice(0, 6).map((community) => (
+    <div
+      key={community.name}
+      style={{
+        borderLeft: `8px solid ${riskColours[community.status]}`,
+        background: darkMode ? "#1e293b" : "#f8fafc",
+        borderRadius: "8px",
+        padding: "10px",
+        marginBottom: "10px",
+      }}
+    >
+      <strong>{community.name}</strong>
+      <div>Status: {community.status}</div>
+      <div>Risk Score: {community.riskScore}</div>
+      <div>Risk Basis: {community.riskLabel}</div>
+      <div>Closest Fire: {community.closestFire?.fireName || "None"}</div>
+      <div>Distance: {community.closestDistance} km</div>
+    </div>
+  ))}
+</SectionCard>
         <SectionCard theme={theme}>
           <h3 style={{ marginTop: 0 }}>Live Wildfire Data</h3>
 
@@ -313,7 +422,30 @@ export default function SituationMap({ theme, darkMode }) {
             <strong>Last Loaded:</strong> {lastLoaded}
           </div>
         </SectionCard>
+        <hr />
 
+<button
+  onClick={loadFIRMS}
+  style={{
+    width: "100%",
+    padding: "12px",
+    borderRadius: "8px",
+    border: "none",
+    background: "#f97316",
+    color: "white",
+    fontWeight: "bold",
+    cursor: "pointer",
+    marginBottom: "10px",
+  }}
+>
+  Load FIRMS Hotspots
+</button>
+
+<div style={{ color: theme.muted, fontSize: "14px" }}>
+  <strong>FIRMS:</strong> {firmsStatus}
+  <br />
+  <strong>Last Loaded:</strong> {firmsLastLoaded}
+</div>
         <SectionCard theme={theme}>
           <h3 style={{ marginTop: 0 }}>Operational Layers</h3>
 
@@ -349,9 +481,19 @@ export default function SituationMap({ theme, darkMode }) {
             />{" "}
             40 / 30 / 20 km Wildfire Buffers
           </label>
+          <br />
+<br />
 
-          <br />
-          <br />
+<label>
+  <input
+    type="checkbox"
+    checked={showFIRMS}
+    onChange={() => setShowFIRMS(!showFIRMS)}
+  />{" "}
+  NASA FIRMS Hotspots
+</label>
+      
+
 
           
         </SectionCard>
@@ -371,7 +513,57 @@ export default function SituationMap({ theme, darkMode }) {
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
 
-         
+{showFIRMS &&
+  firmsHotspots.map((hotspot) => (
+    <Rectangle
+      key={`firms-${hotspot.id}`}
+      bounds={[
+        [
+          hotspot.latitude - 0.04,
+          hotspot.longitude - 0.04,
+        ],
+        [
+          hotspot.latitude + 0.04,
+          hotspot.longitude + 0.04,
+        ],
+      ]}
+      pathOptions={{
+        color: "#660000",
+        weight: 1,
+        fillColor: "#ff0000",
+        fillOpacity: 0.9,
+      }}
+    >
+      <Popup>
+        <strong>NASA FIRMS Hotspot</strong>
+        <br />
+        Latitude: {hotspot.latitude}
+        <br />
+        Longitude: {hotspot.longitude}
+        <br />
+        Confidence: {hotspot.confidence}
+        <br />
+        Brightness: {hotspot.brightness}
+        <br />
+        FRP: {hotspot.frp}
+        <br />
+        Date: {hotspot.acqDate}
+        <br />
+        Time: {hotspot.acqTime}
+      </Popup>
+    </Rectangle>
+  ))}
+<br />
+<br />
+
+<label>
+  <input
+    type="checkbox"
+    checked={showFIRMS}
+    onChange={() => setShowFIRMS(!showFIRMS)}
+  />{" "}
+  NASA FIRMS Hotspots
+</label>
 
           {showCWFIS &&
             wildfires.map((fire) => (
@@ -415,7 +607,7 @@ export default function SituationMap({ theme, darkMode }) {
 
                 <CircleMarker
                   center={[fire.latitude, fire.longitude]}
-                  radius={10}
+                  radius={12}
                   pathOptions={{
                     color: "#111827",
                     weight: 2,
@@ -453,7 +645,7 @@ export default function SituationMap({ theme, darkMode }) {
               <CircleMarker
                 key={community.name}
                 center={community.position}
-                radius={10}
+                radius={5}
                 pathOptions={{
                   color: "#111827",
                   weight: 2,

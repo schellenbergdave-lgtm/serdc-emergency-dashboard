@@ -5,24 +5,55 @@ import SectionCard from "../components/SectionCard";
 import useStoredState from "../hooks/useStoredState";
 
 export default function Operations({ theme }) {
-  const [operationalPeriod, setOperationalPeriod] =
-    useStoredState("operationalPeriod", "Operational Period 1");
+  const [incidents] = useStoredState("serdcIncidents", []);
+  const [activeIncidentId] = useStoredState("serdcActiveIncidentId", null);
 
-  const [incidentObjectives, setIncidentObjectives] =
-    useStoredState("serdcIncidentObjectives", []);
+  const activeIncident = incidents.find(
+    (incident) => incident.id === activeIncidentId
+  );
 
-  const [actionLog, setActionLog] =
-    useStoredState("serdcActionLog", []);
+  const [incidentObjectives, setIncidentObjectives] = useStoredState(
+    "serdcIncidentObjectives",
+    []
+  );
+
+  const [actionLog, setActionLog] = useStoredState("serdcActionLog", []);
 
   const [newObjective, setNewObjective] = useState("");
   const [newAction, setNewAction] = useState("");
 
+  const scopedObjectives = incidentObjectives.filter(
+    (objective) => objective.incidentId === activeIncidentId
+  );
+
+  const scopedActions = actionLog.filter(
+    (entry) => entry.incidentId === activeIncidentId
+  );
+
+  const activeObjectives = scopedObjectives.filter(
+    (objective) => !objective.archived
+  );
+
+  const archivedObjectives = scopedObjectives.filter(
+    (objective) => objective.archived
+  );
+
+  const activeActions = scopedActions.filter((entry) => !entry.archived);
+  const archivedActions = scopedActions.filter((entry) => entry.archived);
+
   function addObjective() {
+    if (!activeIncidentId) {
+      alert("Please create or select an active incident first.");
+      return;
+    }
+
     if (!newObjective.trim()) return;
 
     setIncidentObjectives([
       {
         id: Date.now(),
+        incidentId: activeIncidentId,
+        incidentNumber: activeIncident?.incidentNumber || "",
         text: newObjective,
         status: "Active",
         archived: false,
@@ -35,11 +66,18 @@ export default function Operations({ theme }) {
   }
 
   function addAction() {
+    if (!activeIncidentId) {
+      alert("Please create or select an active incident first.");
+      return;
+    }
+
     if (!newAction.trim()) return;
 
     setActionLog([
       {
         id: Date.now(),
+        incidentId: activeIncidentId,
+        incidentNumber: activeIncident?.incidentNumber || "",
         text: newAction,
         status: "Open",
         archived: false,
@@ -94,16 +132,19 @@ export default function Operations({ theme }) {
     setActionLog(actionLog.filter((entry) => entry.id !== id));
   }
 
-  const activeObjectives = incidentObjectives.filter(
-    (objective) => !objective.archived
-  );
-
-  const archivedObjectives = incidentObjectives.filter(
-    (objective) => objective.archived
-  );
-
-  const activeActions = actionLog.filter((entry) => !entry.archived);
-  const archivedActions = actionLog.filter((entry) => entry.archived);
+  if (!activeIncidentId || !activeIncident) {
+    return (
+      <div style={{ padding: "24px" }}>
+        <SectionCard theme={theme}>
+          <h2 style={{ marginTop: 0 }}>Operations</h2>
+          <p style={{ color: theme.muted }}>
+            No active incident selected. Go to the Incidents tab and create or
+            select an active incident before adding operational records.
+          </p>
+        </SectionCard>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -116,13 +157,18 @@ export default function Operations({ theme }) {
     >
       <div>
         <SectionCard theme={theme}>
-          <h2 style={{ marginTop: 0 }}>Operational Period</h2>
+          <h2 style={{ marginTop: 0 }}>Active Incident</h2>
 
-          <input
-            value={operationalPeriod}
-            onChange={(e) => setOperationalPeriod(e.target.value)}
-            style={inputStyle(theme)}
-          />
+          <div>
+            <strong>{activeIncident.incidentNumber}</strong>
+          </div>
+
+          <div>{activeIncident.name}</div>
+
+          <div style={{ color: theme.muted, marginTop: "6px" }}>
+            Operational Period:{" "}
+            {activeIncident.operationalPeriod || "Not set"}
+          </div>
         </SectionCard>
 
         <SectionCard theme={theme}>
@@ -161,11 +207,17 @@ export default function Operations({ theme }) {
           <h2 style={{ marginTop: 0 }}>Incident Objectives Board</h2>
 
           {activeObjectives.length === 0 && (
-            <div style={{ color: theme.muted }}>No active objectives.</div>
+            <div style={{ color: theme.muted }}>
+              No active objectives for this incident.
+            </div>
           )}
 
           {activeObjectives.map((objective) => (
             <div key={objective.id} style={recordCard(theme)}>
+              <div style={{ color: theme.muted, fontSize: "13px" }}>
+                {objective.incidentNumber}
+              </div>
+
               <textarea
                 value={objective.text}
                 onChange={(e) =>
@@ -226,12 +278,16 @@ export default function Operations({ theme }) {
 
           {activeActions.length === 0 && (
             <div style={{ color: theme.muted }}>
-              No active action log entries.
+              No active action log entries for this incident.
             </div>
           )}
 
           {activeActions.map((entry) => (
             <div key={entry.id} style={recordCard(theme)}>
+              <div style={{ color: theme.muted, fontSize: "13px" }}>
+                {entry.incidentNumber}
+              </div>
+
               <textarea
                 value={entry.text}
                 onChange={(e) =>
@@ -369,7 +425,7 @@ function primaryButton(theme) {
     padding: "12px",
     borderRadius: "8px",
     border: "none",
-    background: theme.secondary,
+    background: "#dc2626",
     color: "white",
     fontWeight: "bold",
     cursor: "pointer",
@@ -379,7 +435,7 @@ function primaryButton(theme) {
 function accentButton(theme) {
   return {
     ...primaryButton(theme),
-    background: theme.accent,
+    background: "#b91c1c",
   };
 }
 
@@ -411,6 +467,7 @@ function recordCard(theme) {
     background: theme.background,
     marginBottom: "12px",
     border: `1px solid ${theme.border}`,
+    borderLeft: "8px solid #dc2626",
   };
 }
 

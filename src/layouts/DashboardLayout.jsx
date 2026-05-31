@@ -30,7 +30,7 @@ export default function DashboardLayout({
 
       <main
         style={{
-          height: "calc(100vh - 122px)",
+          height: "calc(100vh - 132px)",
           width: "100%",
           overflow: "auto",
         }}

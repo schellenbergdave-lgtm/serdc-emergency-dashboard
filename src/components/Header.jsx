@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import TabButton from "./TabButton";
+import useStoredState from "../hooks/useStoredState";
 
 export default function Header({
   activeTab,
@@ -9,6 +10,32 @@ export default function Header({
   theme,
 }) {
   const [currentTime, setCurrentTime] = useState(new Date());
+
+  const [notifications, setNotifications] = useState([]);
+
+useEffect(() => {
+  function loadNotifications() {
+    const stored = localStorage.getItem("serdcNotifications");
+
+    if (stored) {
+      setNotifications(JSON.parse(stored));
+    } else {
+      setNotifications([]);
+    }
+  }
+
+  loadNotifications();
+
+  const interval = setInterval(loadNotifications, 1000);
+
+  return () => clearInterval(interval);
+}, []);
+
+  const unreadNotifications = notifications.filter((item) => !item.read);
+  
+  const criticalUnreadNotifications = unreadNotifications.filter(
+    (item) => item.level === "Critical"
+  );
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -30,22 +57,53 @@ export default function Header({
   ];
 
   const operationsTabs = [
+    "Incidents",
     "Operations",
-    "Resources",
+    "Planning",
+    "Logistics",
+    "Finance",
     "Evacuation",
+    "Reception Center",
     "Reports",
+    "Archives",
+    "Notifications",
   ];
+
+  function getTabColor(tab) {
+    if (tab === "Dashboard") return theme.accent;
+    if (tab === "Situation Map") return theme.accent;
+    if (tab === "Fire Danger") return theme.accent;
+    if (tab === "Wind Forecast") return theme.accent;
+    if (tab === "Weather Forecast") return theme.accent;
+    if (tab === "Smoke Forecast") return theme.accent;
+    if (tab === "Hydro Outages") return theme.accent;
+    if (tab === "Road Conditions") return theme.accent;
+
+    if (tab === "Incidents") return "#16a34a";
+    if (tab === "Operations") return "#dc2626";
+    if (tab === "Planning") return "#2563eb";
+    if (tab === "Logistics") return "#eab308";
+    if (tab === "Finance") return "#6b7280";
+    if (tab === "Evacuation") return "#ea580c";
+    if (tab === "Reception Center") return "#9333ea";
+    if (tab === "Reports") return "#1d4ed8";
+    if (tab === "Archives") return "#64748b";
+if (tab === "Notifications") {
+  return criticalUnreadNotifications.length > 0 ? "#dc2626" : "#2563eb";
+}
+
+    return theme.accent;
+  }
 
   return (
     <div
       style={{
-        height: "122px",
+        height: "132px",
         background: theme.header,
         color: "white",
         display: "flex",
         alignItems: "center",
-        padding: "12px 20px",
-        borderBottom: `4px solid ${theme.accent}`,
+        padding: "18px 20px 0 20px",
         boxSizing: "border-box",
       }}
     >
@@ -55,53 +113,19 @@ export default function Header({
             display: "flex",
             justifyContent: "space-between",
             alignItems: "center",
-            marginBottom: "10px",
+            marginBottom: "14px",
           }}
         >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "14px",
-            }}
-          >
+          <div>
             <div
               style={{
-                height: "56px",
-                width: "56px",
-                borderRadius: "8px",
-                background:
-                  "linear-gradient(135deg, #06b6d4, #22c55e)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
+                fontSize: "26px",
                 fontWeight: "bold",
-                fontSize: "22px",
                 color: "white",
+                lineHeight: 1.1,
               }}
             >
-              S
-            </div>
-
-            <div>
-              <div
-                style={{
-                  fontSize: "24px",
-                  fontWeight: "bold",
-                  color: "white",
-                }}
-              >
-                SERDC Emergency Management Dashboard
-              </div>
-
-              <div
-                style={{
-                  fontSize: "13px",
-                  opacity: 0.82,
-                }}
-              >
-                Southeast Resource Development Council
-              </div>
+              SERDC Emergency Management Dashboard
             </div>
           </div>
 
@@ -151,7 +175,7 @@ export default function Header({
           style={{
             display: "flex",
             gap: "8px",
-            marginBottom: "6px",
+            marginBottom: "8px",
             flexWrap: "wrap",
           }}
         >
@@ -160,7 +184,7 @@ export default function Header({
               key={tab}
               active={activeTab === tab}
               onClick={() => setActiveTab(tab)}
-              color={theme.accent}
+              color={getTabColor(tab)}
             >
               {tab}
             </TabButton>
@@ -171,7 +195,6 @@ export default function Header({
           style={{
             display: "flex",
             gap: "8px",
-            marginLeft: "150px",
             flexWrap: "wrap",
           }}
         >
@@ -180,12 +203,24 @@ export default function Header({
               key={tab}
               active={activeTab === tab}
               onClick={() => setActiveTab(tab)}
-              color={theme.secondary}
+              color={getTabColor(tab)}
             >
-              {tab}
+             {tab === "Notifications" && unreadNotifications.length > 0
+  ? `Notifications (${unreadNotifications.length})`
+  : tab}
             </TabButton>
           ))}
         </div>
+
+        <div
+          style={{
+            height: "4px",
+            background: theme.accent,
+            marginTop: "10px",
+            marginLeft: "-20px",
+            marginRight: "-20px",
+          }}
+        />
       </div>
     </div>
   );
